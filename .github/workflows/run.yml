@@ -1,0 +1,89 @@
+name: Run Changesets Fetcher Pipelines
+
+on:
+  workflow_dispatch: # Manual trigger
+  schedule:
+    # Run weekly on Sunday at 10:00 UTC; latest PDS data should be available by then
+    - cron: '0 10 * * 0'
+
+permissions:
+  id-token: write # Required for OIDC authentication
+  contents: read
+
+jobs:
+  run-athena-queries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # 30 minutes max, Athena queries should finish in 3 minutes.
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up UV
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.YOUTHMAPPERS_AWS_ROLE }}
+          role-session-name: github-actions-athena-queries
+          aws-region: us-east-1
+
+      - name: Run Athena pipeline
+        env:
+          YOUTHMAPPERS_AWS_REGION: ${{ vars.YOUTHMAPPERS_AWS_REGION || 'us-east-1' }}
+          YOUTHMAPPERS_ATHENA_DATABASE: ${{ vars.YOUTHMAPPERS_ATHENA_DATABASE || 'youthmappers' }}
+          YOUTHMAPPERS_ATHENA_WORKGROUP: ${{ vars.YOUTHMAPPERS_ATHENA_WORKGROUP || 'youthmappers' }}
+          YOUTHMAPPERS_ATHENA_OUTPUT_LOCATION: ${{ vars.YOUTHMAPPERS_ATHENA_OUTPUT_LOCATION || 's3://youthmappers-internal-us-east1/athena-results/' }}
+        run: |
+          echo "Running Athena pipeline (database setup + main query)..."
+          uv run athena
+
+  run-duckdb-queries:
+    runs-on: ubuntu-latest
+    needs: run-athena-queries
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up UV
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.YOUTHMAPPERS_AWS_ROLE }}
+          role-session-name: github-actions-duckdb-queries
+          aws-region: us-east-1
+
+      - name: Run DuckDB pipeline
+        run: |
+          echo "Running DuckDB pipeline..."
+          uv run duckdb
+
+      - name: Upload daily rollup to S3
+        run: |
+          echo "Uploading daily_rollup.parquet..."
+          aws --region us-east-1 s3 cp output/daily_rollup.parquet s3://youthmappers-usw2/activity/daily_rollup.parquet
+
+    

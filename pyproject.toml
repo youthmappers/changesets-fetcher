@@ -1,0 +1,32 @@
+[project]
+name = "changesets-fetcher"
+version = "0.1.0"
+description = "YouthMappers changesets data pipeline using AWS Athena and DuckDB"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.35.0",
+    "duckdb>=1.1.0",
+]
+
+[project.scripts]
+athena = "changesets_fetcher.athena:main"
+duckdb = "changesets_fetcher.duckdb:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.6.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = []
