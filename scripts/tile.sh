@@ -19,5 +19,3 @@ echo "Tiling output: Full res bounding boxes"
 tippecanoe -fo "output/res8_bboxes.pmtiles" -Z6 -z6 -z6 -B6 \
                 -x h3 -l daily --no-progress-indicator \
                 -P output/daily_bboxes.geojsonseq
-
-rm output/*.geojsonseq
