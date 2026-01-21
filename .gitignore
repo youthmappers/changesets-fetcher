@@ -46,6 +46,8 @@ output/
 *.csv
 *.parquet
 
+!ne_adm0.parquet
+
 # AWS
 .aws/
 

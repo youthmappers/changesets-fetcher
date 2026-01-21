@@ -205,7 +205,10 @@ class AthenaQueryRunner:
                 status_summary = ", ".join(
                     f"{state}={count}" for state, count in sorted(status_counts.items())
                 )
-                logger.info(f"Query status: {status_summary}")
+                elapsed = time.time() - start_time
+                logger.info(
+                    f"Query status: {status_summary} | elapsed {elapsed:.1f}s"
+                )
                 time.sleep(interval)
                 interval = min(max_interval, interval * backoff)
 

@@ -264,7 +264,7 @@ SELECT id,
     changesets_plus.geometry,
     natural_earth_admin0.a3 AS a3,
     changesets_plus.youthmappers_ds,
-    date_format(max(created_at), '%Y-%m-%d') AS ds
+    date_format( (select(max(created_at)) from changesets_plus), '%Y-%m-%d') AS ds
 FROM changesets_plus changesets_plus
     JOIN planet_rollup planet_rollup ON changesets_plus.id = planet_rollup.changeset
     LEFT JOIN natural_earth_admin0 natural_earth_admin0 ON ST_Contains(
