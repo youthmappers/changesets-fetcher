@@ -81,9 +81,12 @@ jobs:
           echo "Running DuckDB pipeline..."
           uv run duckdb
 
-      - name: Upload daily rollup to S3
+      - name: Build PMTiles from GeoJSONSeq files
         run: |
-          echo "Uploading daily_rollup.parquet..."
-          aws --region us-east-1 s3 cp output/daily_rollup.parquet s3://youthmappers-usw2/activity/daily_rollup.parquet
+          uv run scripts/tile.sh
+
+      - name: Copy output to S3
+        run: |
+          uv run scripts/copy-to-s3.sh
 
     

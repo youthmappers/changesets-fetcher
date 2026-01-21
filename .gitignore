@@ -62,4 +62,4 @@ Thumbs.db
 *.ddb.wal
 .ruff_cache/
 
-scripts/
+scripts/assume-role.sh

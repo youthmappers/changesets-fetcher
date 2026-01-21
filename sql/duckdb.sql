@@ -3,6 +3,7 @@ SELECT
     h3,
     uid,
     CAST(created_at AS date) as created_at,
+    arbitrary(chapter_id) AS chapter_id,
     CAST(
         ROW(
             COALESCE(SUM(buildings.new),0), 
@@ -144,3 +145,31 @@ SELECT
         ])
     ) AS geometry                
 FROM changesets_gb_h3_day
+-- END
+
+-- BEGIN daily-rollup
+SELECT 
+    -- Changesets aggregated by h3 and day, exlude UID
+    changesets_gb_h3_day.* EXCLUDE(uid, geometry),
+    
+    -- YouthMappers Chapter Information:
+    youthmappers.chapter_id,
+    youthmappers.chapter,
+    youthmappers.country AS chapter_country,
+    youthmappers.city AS chapter_city,
+    ST_ASTEXT(youthmappers.geometry) AS chapter_location,
+    
+    -- Country where the editing took place:
+    natural_earth.a3 AS a3,
+    natural_earth.country AS country,
+    natural_earth.name AS country_name,
+    natural_earth.region AS region,
+    -- And include the geometry of the centroid for the heatmap
+    ST_CENTROID(changesets_gb_h3_day.geometry) AS geometry
+FROM changesets_gb_h3_day JOIN youthmappers ON changesets_gb_h3_day.uid = youthmappers.uid
+LEFT JOIN natural_earth ON 
+    ST_Contains(
+        natural_earth.geometry, 
+        ST_CENTROID(changesets_gb_h3_day.geometry)
+    )
+-- END

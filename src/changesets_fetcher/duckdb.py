@@ -175,8 +175,10 @@ def main() -> None:
         )
 
         latest_ds = res.fetchall()[0][0]
-
         logger.info(f"Latest DS for youthmapper changesets: {latest_ds}")
+
+        with open(Path(runner.output_dir, "latest_ds.txt"), 'w') as ds_file:
+            ds_file.write(f"{latest_ds}\n")
 
         runner.run_query(
             query=f"""
@@ -332,40 +334,13 @@ def main() -> None:
             suffix=f"""TO '{Path(runner.output_dir,"daily_bboxes.geojsonseq")}' WITH (FORMAT GDAL, DRIVER "GeoJSONSeq")"""
 		)
 
-        
-
         # Create the actual aggregated output for downstream use.
-        # runner.run_query(
-        #     query="""
-        #     SELECT 
-        #         -- Changesets aggregated by h3 and day, exlude UID
-        #         changesets_gb_h3_day.* EXCLUDE(uid, geometry),
-                
-        #         -- YouthMappers Chapter Information:
-        #         youthmappers.chapter_id,
-        #         youthmappers.chapter,
-        #         youthmappers.country AS chapter_country,
-        #         youthmappers.city AS chapter_city,
-        #         ST_ASTEXT(youthmappers.geometry) AS chapter_location,
-                
-        #         -- Country where the editing took place:
-        #         natural_earth.a3 AS a3,
-        #         natural_earth.country AS country,
-        #         natural_earth.name AS country_name,
-        #         natural_earth.region AS region,
-        #         -- And include the geometry of the centroid for the heatmap
-        #         ST_CENTROID(changesets_gb_h3_day.geometry) AS geometry
-        #     FROM changesets_gb_h3_day JOIN youthmappers ON changesets_gb_h3_day.uid = youthmappers.uid
-        #     LEFT JOIN natural_earth ON 
-        #         ST_Contains(
-        #             natural_earth.geometry, 
-        #             ST_CENTROID(changesets_gb_h3_day.geometry)
-        #         )
-        #     """,
-        #     query_name="YM Changesets Aggregated",
-        #     prefix="COPY",
-        #     suffix=f"TO '{Path(runner.output_dir,"daily_rollup.parquet")}'",
-        # )
+        runner.run_query(
+            query_path="duckdb.sql:daily-rollup",
+            query_name="Creating Daily Rollup Parquet File (aggregated)",
+            prefix="COPY",
+            suffix=f"TO '{Path(runner.output_dir,'daily_rollup.parquet')}'",
+        )
 
 if __name__ == "__main__":
     main()
