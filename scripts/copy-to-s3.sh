@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 LATEST_DS=$(cat output/latest_ds.txt)
 
 echo $LATEST_DS

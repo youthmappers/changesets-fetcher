@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 echo "Tiling output: Res 4"
 tippecanoe -fo "output/res4.pmtiles" -Z2 -z2 -z2 -B2 \
                 -x h3 -l r4agg --no-progress-indicator \
