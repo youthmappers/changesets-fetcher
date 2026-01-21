@@ -5,6 +5,10 @@ import logging
 import os
 import sys
 from pathlib import Path
+import json
+import numpy as np
+import pandas as pd
+from datetime import datetime
 
 import duckdb
 
@@ -91,13 +95,13 @@ class DuckDBQueries:
             suffix_sql = (suffix or "").strip()
             resolved_query = f"{prefix_sql} ({resolved_query}) {suffix_sql}".strip()
 
-        logger.info(f"Executing {query_name}")
+        logger.info(f"{query_name}")
         stmt_preview = resolved_query[:100].replace("\n", " ")
         logger.debug(f"Query preview: {stmt_preview}...")
 
         result = self.conn.execute(resolved_query)
 
-        return result.fetchall()
+        return result
 
     def close(self) -> None:
         """Close the DuckDB connection."""
@@ -148,11 +152,6 @@ def main() -> None:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level (default: INFO)",
     )
-    parser.add_argument(
-        "--no-fetch-from-s3",
-        action="store_true",
-        help="Skip the initial S3 fetch queries (assumes tables already exist)",
-    )
 
     args = parser.parse_args()
     setup_logging(args.log_level)
@@ -164,65 +163,63 @@ def main() -> None:
         database_path=args.database_path,
         output_dir=args.output_dir,
     ) as runner:
-        if args.no_fetch_from_s3:
-            logger.info("Skipping S3 fetch queries (--no-fetch-from-s3 enabled)")
-        else:
-            res = runner.run_query(
-                query="""
-                SELECT 
-                    MAX(ds)
-                FROM 
-                    read_parquet('s3://youthmappers-internal-us-east1/youthmappers_changesets/ds=*/*', hive_partitioning=1)
-                """,
-                query_name="Fetch latest DS for youthmapper changesets",
-            )
-
-            latest_ds = res[0][0]
-
-            logger.info(f"Latest DS for youthmapper changesets: {latest_ds}")
-
-            runner.run_query(
-                query=f"""
-                    SELECT
-                        * EXCLUDE(geometry),
-                        h3_latlng_to_cell_string(
-                            ST_Y(ST_GeomFromWKB(geometry)), 
-                            ST_X(ST_GeomFromWKB(geometry)), 
-                            8
-                        ) AS h3,
-                        ST_GeomFromWKB(geometry) AS geometry
-                    FROM read_parquet('s3://youthmappers-internal-us-east1/youthmappers_changesets/ds={latest_ds}/*')
-                """,
-                query_name="Fetch YM changesets and add h3 indices",
-                prefix="CREATE OR REPLACE TABLE changesets AS",
-            )
-
-            runner.run_query(
-                query="""
-                    SELECT
-                        *
-                    FROM 
-                        read_parquet(
-                            's3://youthmappers-internal-us-east1/mappers/ds=*/youthmappers.zstd.parquet', hive_partitioning=1
-                        )""",
-                query_name="Fetch YouthMappers table",
-                prefix="CREATE OR REPLACE TABLE youthmappers AS",
-            )
-
-        runner.run_query(
-            query="SELECT * FROM 'ne_adm0.parquet'",
-            query_name="Create Natural Earth Countries table",
-            prefix="CREATE OR REPLACE TABLE natural_earth AS",
+        
+        res = runner.run_query(
+            query="""
+            SELECT 
+                MAX(ds)
+            FROM 
+                read_parquet('s3://youthmappers-internal-us-east1/youthmappers_changesets/ds=*/*', hive_partitioning=1)
+            """,
+            query_name="Fetching latest DS for youthmapper changesets",
         )
 
+        latest_ds = res.fetchall()[0][0]
+
+        logger.info(f"Latest DS for youthmapper changesets: {latest_ds}")
+
         runner.run_query(
-            query="""
-                SELECT youthmappers.* 
-                FROM youthmappers 
-                WHERE youthmappers.ds = (SELECT max(changesets.youthmappers_ds) FROM changesets)
+            query=f"""
+                SELECT
+                    * EXCLUDE(geometry),
+                    h3_latlng_to_cell_string(
+                        ST_Y(ST_GeomFromWKB(geometry)), 
+                        ST_X(ST_GeomFromWKB(geometry)), 
+                        8
+                    ) AS h3,
+                    ST_GeomFromWKB(geometry) AS geometry
+                FROM read_parquet('s3://youthmappers-internal-us-east1/youthmappers_changesets/ds={latest_ds}/*')
             """,
-            query_name="Create latest_youthmappers table",
-            prefix="CREATE OR REPLACE TABLE latest_youthmappers AS",
+            query_name="Fetching YM changesets and adding h3 indices",
+            prefix="CREATE TABLE IF NOT EXISTS changesets AS",
+        )
+
+        # Identify the matching ds for YouthMappers table:
+        res = runner.run_query(
+            query = "SELECT max(changesets.youthmappers_ds) FROM changesets",
+            query_name="Getting YouthMappers DS for changesets"
+        )
+        youthmappers_ds = res.fetchall()[0][0]
+        logger.info(f"YouthMappers ds is {youthmappers_ds}")
+
+        runner.run_query(
+            query=f"""
+                SELECT
+                    *,
+                    team_id AS chapter_id,
+                FROM 
+                    read_parquet(
+                        's3://youthmappers-internal-us-east1/mappers/ds={youthmappers_ds}/youthmappers.zstd.parquet', hive_partitioning=1
+                    )""",
+            query_name="Creating YouthMappers table",
+            prefix="CREATE TABLE IF NOT EXISTS youthmappers AS",
+        )
+
+        # Create Natural Earth Table
+        runner.run_query(
+            query="SELECT * FROM 'ne_adm0.parquet'",
+            query_name="Creating Natural Earth Countries table",
+            prefix="CREATE TABLE IF NOT EXISTS natural_earth AS",
         )
 
         # Bring everything together into one primary table
@@ -230,58 +227,145 @@ def main() -> None:
             query="""
                 SELECT
                     changesets.*,
-                    latest_youthmappers.* EXCLUDE(uid, geometry, city, country, username),
-                    latest_youthmappers.country AS chapter_country,
-                    latest_youthmappers.city AS chapter_city,
-                    ST_ASTEXT(latest_youthmappers.geometry) AS chapter_location,
+                    youthmappers.* EXCLUDE(uid, team_id, geometry, city, country, username),
+                    youthmappers.country AS chapter_country,
+                    youthmappers.city AS chapter_city,
+                    ST_ASTEXT(youthmappers.geometry) AS chapter_location,
                     natural_earth.* EXCLUDE(geometry, a3),
-                FROM changesets JOIN latest_youthmappers ON changesets.uid = latest_youthmappers.uid
+                FROM changesets JOIN youthmappers ON changesets.uid = youthmappers.uid
                 LEFT JOIN natural_earth ON changesets.a3 = natural_earth.a3
             """,
-            query_name="Create Complete YM Changesets Table",
-            prefix="CREATE OR REPLACE TABLE ym_changesets AS ",
+            query_name="Creating Complete YM Changesets Table",
+            prefix="CREATE TABLE IF NOT EXISTS ym_changesets AS ",
         )
 
         # Begin aggregation for anonymization and analysis
         runner.run_query(
-            query_path="duckdb.sql",
+            query_path="duckdb.sql:h3_daily_aggregation",
             query_name="H3 Daily Aggregation",
             prefix="CREATE OR REPLACE TABLE changesets_gb_h3_day AS",
         )
 
-        # Create the actual aggregated output for downstream use.
+        # Required output files for the Activity Dashboard
+        # Weekly rollup CSV file
         runner.run_query(
-            query="""
-            SELECT 
-                -- Changesets aggregated by h3 and day, exlude UID
-                changesets_gb_h3_day.* EXCLUDE(uid, geometry),
-                
-                -- YouthMappers Chapter Information:
-                latest_youthmappers.team_id AS chapter_id,
-                latest_youthmappers.chapter,
-                latest_youthmappers.country AS chapter_country,
-                latest_youthmappers.city AS chapter_city,
-                ST_ASTEXT(latest_youthmappers.geometry) AS chapter_location,
-                
-                -- Country where the editing took place:
-                natural_earth.a3 AS a3,
-                natural_earth.country AS country,
-                natural_earth.name AS country_name,
-                natural_earth.region AS region,
-                -- And include the geometry of the centroid for the heatmap
-                ST_CENTROID(changesets_gb_h3_day.geometry) AS geometry
-            FROM changesets_gb_h3_day JOIN latest_youthmappers ON changesets_gb_h3_day.uid = latest_youthmappers.uid
-            LEFT JOIN natural_earth ON 
-                ST_Contains(
-                    natural_earth.geometry, 
-                    ST_CENTROID(changesets_gb_h3_day.geometry)
-                )
-            """,
-            query_name="YM Changesets Aggregated",
+            query_path="duckdb.sql:weekly-rollup",
+            query_name="Writing Weekly Chapter Activity Rollup CSV",
             prefix="COPY",
-            suffix="TO 'daily_rollup.parquet'",
+            suffix=f"TO '{runner.output_dir / 'weekly_chapter_activity.csv'}' WITH (FORMAT CSV, HEADER TRUE)"
         )
 
+        # Chapter list JSON file with reference to ds
+        res = runner.run_query(
+            query="""
+                SELECT DISTINCT
+                    chapter,
+                    chapter_id,
+                    chapter_city AS city,
+                    chapter_country AS country,
+                    university
+                FROM ym_changesets""",
+            query_name="Fetching distinct chapters for activity.json",
+        )
+        chapters = res.df()
+        with open(Path(runner.output_dir, "activity.json"), 'w') as out_file:
+            out_file.write( 
+                json.dumps({
+                    'chapters': chapters.sort_values(by='chapter').to_dict(orient='records'),
+                    'ds': f"{latest_ds}"
+                })
+            )
+
+        # Monthly activity
+        monthly_activity = runner.run_query(
+            query_path="duckdb.sql:monthly-activity",
+            query_name="Calculating Monthly Activity"
+		).df()
+        monthly_activity.to_json(f"{Path(runner.output_dir, 'monthly_activity_all_time.json')}", orient='records')
+
+        # Top edited countries per month
+        most_edited_countries = runner.run_query(
+            query_path="duckdb.sql:most-edited-countries",
+            query_name="Calculating Most Edited Countries"
+        ).df()
+        top_edited_countries = []
+        for month in sorted(most_edited_countries.month.unique()):
+            t15 = most_edited_countries[most_edited_countries.month==month].sort_values(by='all_feats', ascending=False).head(15)
+
+            top_edited_countries.append({
+                'month': month.isoformat(),
+                'top_countries': list(zip(t15.country, t15.all_feats))
+            })
+        json.dump(top_edited_countries, open(f"{Path(runner.output_dir, 'top_edited_countries.json')}", 'w'))
+
+        # Create the zoom level summaries by week
+        for h3_resolution in [6,4]:
+            runner.run_query(
+                query=f"""
+                    SELECT
+                        CAST(epoch(date_trunc('week',created_at)) AS int) as timestamp,
+                        h3_cell_to_parent(h3, {h3_resolution}) AS h3,
+                        arbitrary(chapter_id) as chapter_id,
+                        CAST(sum(features.new + features.edited) AS INT) AS all_feats,
+                        ST_CENTROID(ST_Union_Agg(geometry)) AS geometry
+                    FROM ym_changesets
+                    WHERE country IS NOT NULL
+                    GROUP BY 1, 2, uid""",
+                query_name=f"Creating H3 Resolution {h3_resolution} Weekly Summaries",
+                prefix="COPY",
+                suffix=f"""TO '{Path(runner.output_dir, f"h3_{h3_resolution}_weekly.geojsonseq")}' WITH (FORMAT GDAL, DRIVER "GeoJSONSeq")"""
+            )
+            
+		# Creating Daily Level Tile Summaries"
+        runner.run_query(
+            query_path="duckdb.sql:daily-level-tile-summaries",
+            query_name="Creating Daily Level Tile Summaries",
+            prefix="COPY",
+            suffix=f"""TO '{Path(runner.output_dir,"daily_editing_per_user.geojsonseq")}' WITH (FORMAT GDAL, DRIVER "GeoJSONSeq")"""
+        )
+
+		# Creating Daily Level bounding boxes
+        runner.run_query(
+            query_path="duckdb.sql:daily-level-bboxes",
+            query_name="Creating Daily Level Bounding Boxes",
+            prefix="COPY",
+            suffix=f"""TO '{Path(runner.output_dir,"daily_bboxes.geojsonseq")}' WITH (FORMAT GDAL, DRIVER "GeoJSONSeq")"""
+		)
+
+        
+
+        # Create the actual aggregated output for downstream use.
+        # runner.run_query(
+        #     query="""
+        #     SELECT 
+        #         -- Changesets aggregated by h3 and day, exlude UID
+        #         changesets_gb_h3_day.* EXCLUDE(uid, geometry),
+                
+        #         -- YouthMappers Chapter Information:
+        #         youthmappers.chapter_id,
+        #         youthmappers.chapter,
+        #         youthmappers.country AS chapter_country,
+        #         youthmappers.city AS chapter_city,
+        #         ST_ASTEXT(youthmappers.geometry) AS chapter_location,
+                
+        #         -- Country where the editing took place:
+        #         natural_earth.a3 AS a3,
+        #         natural_earth.country AS country,
+        #         natural_earth.name AS country_name,
+        #         natural_earth.region AS region,
+        #         -- And include the geometry of the centroid for the heatmap
+        #         ST_CENTROID(changesets_gb_h3_day.geometry) AS geometry
+        #     FROM changesets_gb_h3_day JOIN youthmappers ON changesets_gb_h3_day.uid = youthmappers.uid
+        #     LEFT JOIN natural_earth ON 
+        #         ST_Contains(
+        #             natural_earth.geometry, 
+        #             ST_CENTROID(changesets_gb_h3_day.geometry)
+        #         )
+        #     """,
+        #     query_name="YM Changesets Aggregated",
+        #     prefix="COPY",
+        #     suffix=f"TO '{Path(runner.output_dir,"daily_rollup.parquet")}'",
+        # )
 
 if __name__ == "__main__":
     main()

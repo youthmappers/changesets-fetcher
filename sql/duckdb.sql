@@ -1,3 +1,4 @@
+--BEGIN h3_daily_aggregation
 SELECT
     h3,
     uid,
@@ -64,3 +65,82 @@ SELECT
 FROM ym_changesets
 WHERE geometry IS NOT NULL
 GROUP BY 1,2,3
+--END 
+
+--BEGIN weekly-rollup
+SELECT 
+    chapter_id,
+    date_trunc('week', created_at) as week,
+    CAST( sum(features.new + features.edited) AS INT) AS all_feats,
+    CAST( sum(buildings.new + buildings.edited) AS INT) AS buildings,
+    CAST( sum(highways.new + highways.edited) AS INT) AS highways,
+    CAST( sum(amenities.new + amenities.edited) AS INT) AS amenities,
+    CAST( sum(features.new + features.edited - buildings.new - buildings.edited - highways.new - highways.edited - amenities.new - amenities.edited) AS INT) AS other,
+    count(distinct(uid)) AS mappers,
+FROM changesets_gb_h3_day
+GROUP BY 1,2
+--END
+
+-- BEGIN monthly-activity
+SELECT
+    date_trunc('month', created_at) + INTERVAL 14 DAY AS month,
+    sum(buildings.new) as new_buildings,
+    sum(highways.new) as new_highways,
+    sum(amenities.new) as new_amenities,
+    sum(buildings.edited) as edited_buildings,
+    sum(highways.edited) as edited_highways,
+    sum(amenities.edited) as edited_amenities,
+    count(distinct(chapter_id)) as chapters,
+    count(distinct(uid)) as users
+FROM changesets_gb_h3_day
+WHERE created_at < date_trunc('month', today())
+GROUP BY 1
+ORDER BY 1 ASC
+--END
+
+-- BEGIN most-edited-countries
+SELECT 
+    country,
+    date_trunc('month', created_at) + INTERVAL 14 DAY AS month,
+    sum(features.edited + features.new) AS all_feats
+FROM ym_changesets
+WHERE created_at > date_trunc('month', (today() - INTERVAL 90 day)) AND country IS NOT NULL
+GROUP BY 1,2
+ORDER BY all_feats DESC
+-- END
+
+-- BEGIN daily-level-tile-summaries
+SELECT
+    h3,
+    CAST(epoch(created_at) AS INT) AS timestamp,
+    chapter_id,
+    CAST( features.new + features.edited AS INT) AS all_feats,
+    CAST( buildings.new + buildings.edited AS INT) AS buildings,
+    CAST( highways.new + highways.edited AS INT) AS highways,
+    CAST( amenities.new + amenities.edited AS INT) AS amenities,
+    ST_CENTROID(geometry) AS geometry
+FROM changesets_gb_h3_day
+-- END
+
+-- BEGIN daily-level-bboxes
+SELECT
+    h3,
+    CAST(epoch(created_at) AS INT) AS timestamp,
+    chapter_id,
+    features.new + features.edited AS all_feats,
+    buildings.new + buildings.edited AS buildings,
+    highways.new + highways.edited AS highways,
+    amenities.new + amenities.edited AS amenities,
+    ST_ENVELOPE(
+        ST_COLLECT(ARRAY[
+            ST_POINT(
+                list_sort(list_transform(bboxes, bbox -> bbox.xmin))[1],
+                list_sort(list_transform(bboxes, bbox -> bbox.ymin))[1]
+            ),
+            ST_POINT(
+                list_sort(list_transform(bboxes, bbox -> bbox.xmax))[-1],
+                list_sort(list_transform(bboxes, bbox -> bbox.ymax))[-1]
+            )
+        ])
+    ) AS geometry                
+FROM changesets_gb_h3_day
