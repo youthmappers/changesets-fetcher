@@ -63,3 +63,4 @@ Thumbs.db
 .ruff_cache/
 
 scripts/assume-role.sh
+.claude/
