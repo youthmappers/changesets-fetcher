@@ -1,6 +1,6 @@
 # YouthMappers Changesets Fetcher
 
-A weekly, fully automated data pipeline that pulls YouthMappers changesets from the OSM Public Dataset (Athena), enriches and aggregates them (DuckDB), and publishes GeoParquet, CSV, JSON, and PMTiles used by the YouthMappers Activity Dashboard.
+An automated weekly data pipeline that pulls YouthMappers changesets from the OSM Public Dataset (Athena), enriches and aggregates them (DuckDB), and publishes GeoParquet, CSV, JSON, and PMTiles used by the YouthMappers Activity Dashboard.
 
 [![Run Athena Queries](https://github.com/youthmappers/changesets-fetcher/actions/workflows/run-athena.yml/badge.svg)](https://github.com/youthmappers/changesets-fetcher/actions/workflows/run-athena.yml)
 

@@ -270,6 +270,7 @@ def main() -> None:
             query_name="Fetching distinct chapters for activity.json",
         )
         chapters = res.df()
+        chapters = chapters.where(chapters.notna(), None)
         with open(Path(runner.output_dir, "activity.json"), 'w') as out_file:
             out_file.write( 
                 json.dumps({
