@@ -21,3 +21,4 @@ aws --region us-west-2 s3 cp output/daily_rollup.parquet s3://youthmappers-usw2/
 
 # Finally, clear the cloudfront cache:
 aws --region us-west-2 cloudfront create-invalidation --distribution-id E6U9U7HMQT3MF --paths "/activity-dashboard/activity.json"
+aws --region us-west-2 cloudfront create-invalidation --distribution-id E6U9U7HMQT3MF --paths "/activity/daily_rollup.parquet"
