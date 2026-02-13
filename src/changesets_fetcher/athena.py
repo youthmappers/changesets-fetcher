@@ -297,6 +297,39 @@ class AthenaQueryRunner:
         logger.info("✓ Glue partitions created: %s", created)
         return created
 
+    def clear_s3_prefix(self, s3_prefix: str) -> int:
+        """Delete all objects under an S3 prefix.
+
+        Args:
+            s3_prefix: S3 URI prefix like s3://bucket/path/
+
+        Returns:
+            Number of objects deleted
+        """
+        if not s3_prefix.startswith("s3://"):
+            raise ValueError("s3_prefix must be a full S3 URI (s3://bucket/path/)")
+
+        bucket_and_prefix = s3_prefix.replace("s3://", "", 1)
+        bucket, prefix = bucket_and_prefix.split("/", 1)
+
+        paginator = self.s3_client.get_paginator("list_objects_v2")
+        deleted = 0
+
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            objects = page.get("Contents", [])
+            if not objects:
+                continue
+
+            delete_keys = [{"Key": obj["Key"]} for obj in objects]
+            self.s3_client.delete_objects(
+                Bucket=bucket,
+                Delete={"Objects": delete_keys},
+            )
+            deleted += len(delete_keys)
+
+        logger.info(f"✓ Cleared {deleted} objects from {s3_prefix}")
+        return deleted
+
     def _list_partitions_from_s3(
         self,
         s3_prefix: str,
@@ -444,18 +477,30 @@ def main() -> None:
         table_name="youthmappers", s3_prefix="s3://youthmappers-internal-us-east1/mappers/"
     )
 
-    # Step 3: Run the primary YouthMappers unload query to create parquet files
+    # Step 3: Create the YouthMappers changesets table as parquet files
+    # Drop existing table and clean S3 location first (CTAS requires empty location)
+    changesets_table = "youthmappers_changesets"
+    changesets_s3_location = "s3://youthmappers-internal-us-east1/youthmappers_changesets/"
+
+    runner.run_query(
+        query=f"DROP TABLE IF EXISTS {changesets_table}",
+        query_name=f"Drop existing {changesets_table} table",
+    )
+    runner.wait_for_queries()
+
+    runner.clear_s3_prefix(changesets_s3_location)
+
     runner.run_query(
         query_path="youthmappers_query.sql",
         query_name="Create YouthMappers Parquet Files",
-        prefix="UNLOAD",
-        suffix=""" 
-          TO 's3://youthmappers-internal-us-east1/youthmappers_changesets/'
-          WITH (
-                format = 'PARQUET',
-                compression = 'ZSTD',
-                partitioned_by = ARRAY['ds']
-            )""",
+        prefix=f"""CREATE TABLE {changesets_table}
+WITH (
+    format = 'PARQUET',
+    parquet_compression = 'ZSTD',
+    partitioned_by = ARRAY['ds'],
+    external_location = '{changesets_s3_location}'
+)
+AS""",
     )
 
     runner.wait_for_queries()
