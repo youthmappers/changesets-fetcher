@@ -2,7 +2,6 @@
 
 import argparse
 import logging
-import os
 import sys
 from pathlib import Path
 import json
@@ -51,20 +50,6 @@ class DuckDBQueries:
             REGION 'us-east-1'
         );""")
         self.conn.execute("SET s3_region='us-east-1';")
-
-        def _mask(value: str | None) -> str:
-            if not value:
-                return "<unset>"
-            if len(value) <= 8:
-                return "***"
-            return f"{value[:4]}...{value[-4:]}"
-
-        logger.info(
-            "AWS env: AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s",
-            _mask(os.getenv("AWS_ACCESS_KEY_ID")),
-            _mask(os.getenv("AWS_SECRET_ACCESS_KEY")),
-            _mask(os.getenv("AWS_SESSION_TOKEN")),
-        )
 
     def run_query(
         self,
@@ -193,7 +178,7 @@ def main() -> None:
                 FROM read_parquet('s3://youthmappers-internal-us-east1/youthmappers_changesets/ds={latest_ds}/*')
             """,
             query_name="Fetching YM changesets and adding h3 indices",
-            prefix="CREATE TABLE IF NOT EXISTS changesets AS",
+            prefix="CREATE OR REPLACE TABLE changesets AS",
         )
 
         # Identify the matching ds for YouthMappers table:
@@ -214,14 +199,14 @@ def main() -> None:
                         's3://youthmappers-internal-us-east1/mappers/ds={youthmappers_ds}/youthmappers.zstd.parquet', hive_partitioning=1
                     )""",
             query_name="Creating YouthMappers table",
-            prefix="CREATE TABLE IF NOT EXISTS youthmappers AS",
+            prefix="CREATE OR REPLACE TABLE youthmappers AS",
         )
 
         # Create Natural Earth Table
         runner.run_query(
             query="SELECT * FROM 'ne_adm0.parquet'",
             query_name="Creating Natural Earth Countries table",
-            prefix="CREATE TABLE IF NOT EXISTS natural_earth AS",
+            prefix="CREATE OR REPLACE TABLE natural_earth AS",
         )
 
         # Bring everything together into one primary table
@@ -238,7 +223,7 @@ def main() -> None:
                 LEFT JOIN natural_earth ON changesets.a3 = natural_earth.a3
             """,
             query_name="Creating Complete YM Changesets Table",
-            prefix="CREATE TABLE IF NOT EXISTS ym_changesets AS ",
+            prefix="CREATE OR REPLACE TABLE ym_changesets AS ",
         )
 
         # Begin aggregation for anonymization and analysis

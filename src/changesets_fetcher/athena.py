@@ -1,8 +1,7 @@
-"""AWS Athena query execution with role assumption and waiters."""
+"""AWS Athena query execution with waiters."""
 
 import argparse
 import logging
-import os
 import sys
 import time
 
@@ -17,80 +16,25 @@ from .utils import load_query_from_path
 class AthenaQueryRunner:
     """Execute Athena queries with proper waiting and error handling."""
 
+    region = "us-east-1"
+    database = "youthmappers"
+    workgroup = "youthmappers"
+    output_location = "s3://youthmappers-internal-us-east1/athena-results/"
+
     running_queries: dict[str, str] = {}
 
-    def __init__(
-        self,
-        role_arn: str | None = None,
-        region: str | None = None,
-        output_location: str | None = None,
-        workgroup: str | None = None,
-        database: str | None = None,
-    ):
-        """Initialize the Athena query runner.
-
-        Args:
-            role_arn: AWS IAM role ARN (defaults to YOUTHMAPPERS_AWS_ROLE env var)
-            region: AWS region (defaults to YOUTHMAPPERS_AWS_REGION env var or us-east-1)
-            output_location: S3 output location (defaults to YOUTHMAPPERS_ATHENA_OUTPUT_LOCATION)
-            workgroup: Athena workgroup (defaults to YOUTHMAPPERS_ATHENA_WORKGROUP)
-            database: Athena database name (defaults to YOUTHMAPPERS_ATHENA_DATABASE)
-        """
-        import os
-
-        # Use environment variables with sensible defaults
-        self.region = region or os.getenv("YOUTHMAPPERS_AWS_REGION", "us-east-1")
-        self.output_location = output_location or os.getenv(
-            "YOUTHMAPPERS_ATHENA_OUTPUT_LOCATION",
-            "s3://youthmappers-internal-us-east1/athena-results/",
-        )
-        self.workgroup = workgroup or os.getenv("YOUTHMAPPERS_ATHENA_WORKGROUP", "youthmappers")
-        self.database = database or os.getenv("YOUTHMAPPERS_ATHENA_DATABASE", "youthmappers")
-        role_arn = role_arn or os.getenv("YOUTHMAPPERS_AWS_ROLE")
-
+    def __init__(self) -> None:
+        """Initialize the Athena query runner with the ambient AWS credentials."""
         logger.info("Athena configuration:")
         logger.info(f"  Region: {self.region}")
         logger.info(f"  Database: {self.database}")
         logger.info(f"  Workgroup: {self.workgroup}")
         logger.info(f"  Output location: {self.output_location}")
-        if role_arn:
-            logger.info(f"  Role ARN: {role_arn}")
 
-        self.session = self._create_session(role_arn)
+        self.session = boto3.Session()
         self.athena_client = self.session.client("athena", region_name=self.region)
         self.s3_client = self.session.client("s3", region_name=self.region)
         self.glue_client = self.session.client("glue", region_name=self.region)
-
-    def _create_session(self, role_arn: str | None) -> boto3.Session:
-        """Create a boto3 session, assuming a role if specified.
-
-        Args:
-            role_arn: AWS IAM role ARN to assume
-
-        Returns:
-            Configured boto3 Session
-        """
-        if role_arn:
-            logger.info(f"Assuming role: {role_arn}")
-            sts_client = boto3.client("sts")
-            try:
-                assumed_role = sts_client.assume_role(
-                    RoleArn=role_arn,
-                    RoleSessionName="changesets-fetcher-session",
-                    DurationSeconds=3600,
-                )
-                credentials = assumed_role["Credentials"]
-                return boto3.Session(
-                    aws_access_key_id=credentials["AccessKeyId"],
-                    aws_secret_access_key=credentials["SecretAccessKey"],
-                    aws_session_token=credentials["SessionToken"],
-                )
-            except ClientError as e:
-                logger.error(f"Failed to assume role: {e}")
-                raise
-        else:
-            logger.info("Using default AWS credentials")
-            return boto3.Session()
 
     def run_query(
         self,
@@ -386,31 +330,6 @@ def main() -> None:
         description="YouthMappers Athena data pipeline - explicit query execution"
     )
     parser.add_argument(
-        "--role-arn",
-        default=os.environ.get("YOUTHMAPPERS_AWS_ROLE"),
-        help="AWS IAM role ARN to assume (default: YOUTHMAPPERS_AWS_ROLE env var)",
-    )
-    parser.add_argument(
-        "--region",
-        default=os.environ.get("YOUTHMAPPERS_AWS_REGION"),
-        help="AWS region (default: YOUTHMAPPERS_AWS_REGION env var)",
-    )
-    parser.add_argument(
-        "--output-location",
-        default=os.environ.get("YOUTHMAPPERS_ATHENA_OUTPUT_LOCATION"),
-        help="Athena output S3 location (default: YOUTHMAPPERS_ATHENA_OUTPUT_LOCATION env var)",
-    )
-    parser.add_argument(
-        "--workgroup",
-        default=os.environ.get("YOUTHMAPPERS_ATHENA_WORKGROUP"),
-        help="Athena workgroup (default: YOUTHMAPPERS_ATHENA_WORKGROUP env var)",
-    )
-    parser.add_argument(
-        "--database",
-        default=os.environ.get("YOUTHMAPPERS_ATHENA_DATABASE"),
-        help="Athena database (default: YOUTHMAPPERS_ATHENA_DATABASE env var)",
-    )
-    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -424,13 +343,7 @@ def main() -> None:
 
     logger.info("\nInitializing Athena query runner...")
 
-    runner = AthenaQueryRunner(
-        role_arn=args.role_arn,
-        region=args.region,
-        output_location=args.output_location,
-        workgroup=args.workgroup,
-        database=args.database,
-    )
+    runner = AthenaQueryRunner()
 
     logger.info("-" * 80)
     logger.info("Beginning Athena Query Execution Pipeline")

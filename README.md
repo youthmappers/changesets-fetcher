@@ -46,13 +46,14 @@ All of the above is automated via GitHub Actions.
 
 ### Configuration
 
-Athena settings are read from environment variables (with defaults):
+Athena settings are fixed on `AthenaQueryRunner` in [src/changesets_fetcher/athena.py](src/changesets_fetcher/athena.py):
 
-- `YOUTHMAPPERS_AWS_REGION` (default us-east-1)
-- `YOUTHMAPPERS_ATHENA_DATABASE` (default youthmappers)
-- `YOUTHMAPPERS_ATHENA_WORKGROUP` (default youthmappers)
-- `YOUTHMAPPERS_ATHENA_OUTPUT_LOCATION` (default s3://youthmappers-internal-us-east1/athena-results/)
-- `YOUTHMAPPERS_AWS_ROLE` (OIDC-assumed role in GitHub Actions)
+- Region: us-east-1
+- Database: youthmappers
+- Workgroup: youthmappers
+- Output location: s3://youthmappers-internal-us-east1/athena-results/
+
+AWS credentials come from the standard `AWS_*` environment variables: set by OIDC in GitHub Actions (using the role in the `YOUTHMAPPERS_AWS_ROLE` secret), or locally with `eval "$(./login.sh)"`.
 
 ## DuckDB pipeline
 
