@@ -39,11 +39,6 @@ jobs:
           aws-region: us-east-1
 
       - name: Run Athena pipeline
-        env:
-          YOUTHMAPPERS_AWS_REGION: ${{ vars.YOUTHMAPPERS_AWS_REGION || 'us-east-1' }}
-          YOUTHMAPPERS_ATHENA_DATABASE: ${{ vars.YOUTHMAPPERS_ATHENA_DATABASE || 'youthmappers' }}
-          YOUTHMAPPERS_ATHENA_WORKGROUP: ${{ vars.YOUTHMAPPERS_ATHENA_WORKGROUP || 'youthmappers' }}
-          YOUTHMAPPERS_ATHENA_OUTPUT_LOCATION: ${{ vars.YOUTHMAPPERS_ATHENA_OUTPUT_LOCATION || 's3://youthmappers-internal-us-east1/athena-results/' }}
         run: |
           echo "Running Athena pipeline (database setup + main query)..."
           uv run athena
